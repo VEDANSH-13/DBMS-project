@@ -1,4 +1,4 @@
--- Create tables
+-- Table Creation
 
 CREATE TABLE User (
     user_id INT PRIMARY KEY,
@@ -44,41 +44,97 @@ CREATE TABLE Driver (
     experience INT
 );
 
--- Insert sample data
+-- Example Stored Procedures (simplified)
 
-INSERT INTO User (user_id, name, email, phone) VALUES
-(1, 'Alice Sharma', 'alice@gmail.com', '9876543210'),
-(2, 'Bob Kumar', 'bobkumar@gmail.com', '9988776655'),
-(3, 'Carol Mehta', 'carolm@example.com', '9612345678'),
-(4, 'David Singh', 'davidsingh@example.com', '8899776655'),
-(5, 'Eva Joseph', 'evajoseph@example.com', '7722334455'),
-(6, 'Faisal Khan', 'faisalkhan@example.com', '8888882222'),
-(7, 'Grace Pinto', 'gracepinto@example.com', '9004321234'),
-(8, 'Hari Rao', 'harirao@example.com', '8989989898');
+DELIMITER //
 
-INSERT INTO Vehicle (vehicle_id, model, registration_number, daily_rate, available) VALUES
-(101, 'Toyota Camry', 'RJ14AB1234', 2500.00, TRUE),
-(102, 'Honda City', 'DL08XZ5412', 1800.00, TRUE),
-(103, 'Maruti Swift', 'MH01AA1010', 1300.00, TRUE),
-(104, 'Hyundai Creta', 'WB07MG6543', 2200.00, TRUE),
-(105, 'Ford EcoSport', 'KA05FC2012', 2100.00, TRUE),
-(106, 'Tata Nexon', 'TN22CG1100', 1750.00, TRUE);
+CREATE PROCEDURE AddUser (
+    IN p_name VARCHAR(100),
+    IN p_email VARCHAR(100),
+    IN p_phone VARCHAR(15)
+)
+BEGIN
+    INSERT INTO User (name, email, phone) VALUES (p_name, p_email, p_phone);
+END //
 
-INSERT INTO Booking (booking_id, user_id, vehicle_id, start_date, end_date, status) VALUES
-(5001, 1, 101, '2025-10-08', '2025-10-10', 'Confirmed'),
-(5002, 2, 102, '2025-10-09', '2025-10-11', 'Pending'),
-(5003, 3, 103, '2025-10-13', '2025-10-15', 'Confirmed'),
-(5004, 4, 104, '2025-10-14', '2025-10-16', 'Confirmed');
+CREATE PROCEDURE AddVehicle (
+    IN p_model VARCHAR(100),
+    IN p_registration_number VARCHAR(20),
+    IN p_daily_rate DECIMAL(8,2),
+    IN p_available BOOLEAN
+)
+BEGIN
+    INSERT INTO Vehicle (model, registration_number, daily_rate, available)
+    VALUES (p_model, p_registration_number, p_daily_rate, p_available);
+END //
 
-INSERT INTO Payment (payment_id, booking_id, amount, payment_date, method) VALUES
-(9001, 5001, 5000.00, '2025-10-08', 'Card'),
-(9002, 5002, 3600.00, '2025-10-09', 'Cash'),
-(9003, 5003, 2600.00, '2025-10-13', 'UPI'),
-(9004, 5004, 4400.00, '2025-10-14', 'Card');
+CREATE PROCEDURE SearchAvailableVehicles (
+    IN p_start_date DATE,
+    IN p_end_date DATE
+)
+BEGIN
+    SELECT * FROM Vehicle V
+    WHERE V.available = TRUE
+    AND V.vehicle_id NOT IN (
+        SELECT vehicle_id FROM Booking
+        WHERE NOT (end_date < p_start_date OR start_date > p_end_date)
+    );
+END //
 
-INSERT INTO Driver (driver_id, aadhar_card_no, name, age, gender, experience) VALUES
-(1, '123456789012', 'Rajesh Yadav', 35, 'Male', 10),
-(2, '987654321098', 'Deepa Verma', 28, 'Female', 6),
-(3, '112233445566', 'Omkar Joshi', 40, 'Male', 15),
-(4, '223344556677', 'Sunita Das', 32, 'Female', 8);
+CREATE PROCEDURE BookVehicle (
+    IN p_user_id INT,
+    IN p_vehicle_id INT,
+    IN p_start_date DATE,
+    IN p_end_date DATE,
+    IN p_payment_method VARCHAR(20)
+)
+BEGIN
+    DECLARE rental_days INT;
+    DECLARE rental_cost DECIMAL(10,2);
 
+    IF EXISTS (
+        SELECT 1 FROM Booking
+        WHERE vehicle_id = p_vehicle_id AND NOT (end_date < p_start_date OR start_date > p_end_date)
+    ) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Vehicle not available for selected dates';
+    ELSE
+        INSERT INTO Booking (user_id, vehicle_id, start_date, end_date, status)
+        VALUES (p_user_id, p_vehicle_id, p_start_date, p_end_date, 'Confirmed');
+
+        SET rental_days = DATEDIFF(p_end_date, p_start_date) + 1;
+
+        SELECT daily_rate INTO rental_cost FROM Vehicle WHERE vehicle_id = p_vehicle_id;
+        SET rental_cost = rental_cost * rental_days;
+
+        INSERT INTO Payment (booking_id, amount, payment_date, method)
+        VALUES (LAST_INSERT_ID(), rental_cost, CURDATE(), p_payment_method);
+
+        UPDATE Vehicle SET available = FALSE WHERE vehicle_id = p_vehicle_id;
+    END IF;
+END //
+
+CREATE PROCEDURE ReturnVehicle (
+    IN p_booking_id INT
+)
+BEGIN
+    UPDATE Booking SET status = 'Completed' WHERE booking_id = p_booking_id;
+
+    UPDATE Vehicle V
+    JOIN Booking B ON V.vehicle_id = B.vehicle_id
+    SET V.available = TRUE
+    WHERE B.booking_id = p_booking_id;
+END //
+
+CREATE PROCEDURE AddDriver (
+    IN p_aadhar_no VARCHAR(12),
+    IN p_name VARCHAR(100),
+    IN p_age INT,
+    IN p_gender VARCHAR(10),
+    IN p_experience INT
+)
+BEGIN
+    INSERT INTO Driver (aadhar_card_no, name, age, gender, experience)
+    VALUES (p_aadhar_no, p_name, p_age, p_gender, p_experience);
+END //
+
+DELIMITER ;
